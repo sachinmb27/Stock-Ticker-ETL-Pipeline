@@ -7,13 +7,10 @@ from google.cloud import pubsub_v1
 from google.cloud.pubsub_v1.publisher.futures import Future
 import json
 
-PROJECT_ID = 'egen-training-mbs'
-TOPIC_ID = 'sample_topic'
-
 class PublishToPubSub:
     def __init__(self):
-        self.project_id = PROJECT_ID
-        self.topic_id = TOPIC_ID
+        self.project_id = 'egen-training-mbs'
+        self.topic_id = 'sample_topic'
         self.publisher_client = pubsub_v1.PublisherClient()
         self.topic_path = self.publisher_client.topic_path(self.project_id, self.topic_id)
         self.publish_futures = []
@@ -22,7 +19,11 @@ class PublishToPubSub:
     async def get_data(self, session, url):
         async with session.get(url) as resp:
             data = await resp.json()
-            return data
+            
+            if data:
+                return data
+            else:
+                raise Exception(f"{resp.status_code} - Failed to fetch data.")
 
     # Function that handles the API calls
     async def main(self, urls):
@@ -35,17 +36,28 @@ class PublishToPubSub:
             for data in original_data:
                 self.publish_message_to_topic(json.dumps(data, indent=2))
     
-    # def get_callback(self, publish_future: Future, data: str) -> callable:
-    #     def callback(publish_future):
-    #         try:
-    #             print(publish_future)
-    #         except futures.TimeoutError:
-    #             print(data)
+    # Callback function to handle publish failures
+    def get_callback(self, publish_future: Future, data: str) -> callable:
+        def callback(publish_future):
+            try:
+                # wait 60 seconds for the publish call to succeed
+                publish_future.result(timeout=60)
+                print(publish_future)
+            except futures.TimeoutError:
+                print(data)
         
-    #     return callback
+        return callback
     
-    # Publishes the message to Pub/Sub topic
+    # Publishes the message to Pub/Sub topic with an error handler
     def publish_message_to_topic(self, message: str) -> None:
         # client returns a future when a message is published
         publish_future = self.publisher_client.publish(self.topic_path, message.encode('utf-8'))
+
+        # publish failures are handled by the callback function
+        publish_future.add_done_callback(self.get_callback(publish_future, message))
+        self.publish_futures.append(publish_future)
+
+        # waits for all the publish futures to resolve before exiting
+        futures.wait(self.publish_futures, return_when=futures.ALL_COMPLETED)
+        
         print(publish_future.result())

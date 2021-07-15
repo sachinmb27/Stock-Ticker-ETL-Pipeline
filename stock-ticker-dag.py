@@ -1,35 +1,44 @@
+import airflow
 from airflow import DAG
 from airflow.operators.dummy_operator import DummyOperator
 from airflow.operators.python_operator import PythonOperator
 from datetime import datetime
-import services.async_api_call
-import asyncio
-from services.transform_data import transformation_on_data
-from services.insert_into_bigquery import insert_data_to_bigquery
 import time
+import asyncio
+
+import async_api_call
+import transform_data
+import insert_into_bigquery
 
 # Default Argument
 default_args = {
     'owner': 'Sachin M B',
-    'start_date': datetime.now(),
+    'start_date': airflow.utils.dates.days_ago(1),
     'email_on_failure': False,
     'email_on_retry': False,
     'retries': 2
 }
 
 # Sample API calls
-urls = ['https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=TSLA&interval=5min&apikey=AHEAG5EVYQQJ8FQP',
-        'https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=GOOG&interval=5min&apikey=AHEAG5EVYQQJ8FQP',
-        'https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=TWTR&interval=5min&apikey=AHEAG5EVYQQJ8FQP'
+urls = ['https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=TSLA&interval=5min&outputsize=full&apikey=AHEAG5EVYQQJ8FQP',
+        'https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=GOOG&interval=5min&outputsize=full&apikey=AHEAG5EVYQQJ8FQP',
+        'https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=TWTR&interval=5min&outputsize=full&apikey=AHEAG5EVYQQJ8FQP'
 ]
 
-# Function to start the asynchronous API calls
+# Helper functions
 def get_api_data():
-    obj = services.async_api_call.PublishToPubSub()
+    obj = async_api_call.PublishToPubSub()
     loop = asyncio.get_event_loop()
     loop.run_until_complete(obj.main(urls))
-
     # asyncio.run(obj.main(urls))
+
+def data_transformation():
+    obj = transform_data.transformData()
+    obj.transformation_on_data()
+
+def load_to_bq():
+    obj = insert_into_bigquery.insertIntoBigQuery()
+    obj.insert_data_to_bigquery()
 
 # DAG Definition
 dag = DAG('stock_ticker_dag',
@@ -58,13 +67,13 @@ with dag:
     # Transforms the data 
     transform_data = PythonOperator(
         task_id="transform_data_and_store",
-        python_callable=transformation_on_data
+        python_callable=data_transformation
     )
 
     # Inserts data into BigQuery table
     insert_into_bq = PythonOperator(
         task_id="insert_into_bigquery",
-        python_callable=insert_data_to_bigquery
+        python_callable=load_to_bq
     )
 
     # Dummy end task
